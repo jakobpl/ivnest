@@ -44,7 +44,7 @@ class SearchBarView: UIView {
         searchContainer.backgroundColor = .clear
         searchContainer.layer.borderWidth = 1.0
         searchContainer.layer.borderColor = UIColor.white.cgColor
-        searchContainer.layer.cornerRadius = 12
+        searchContainer.layer.cornerRadius = 20
         searchContainer.transform = CGAffineTransform(scaleX: 1.0, y: 1.0)
         
         // Search shadow view
@@ -52,9 +52,9 @@ class SearchBarView: UIView {
         searchShadowView.backgroundColor = .clear
         searchShadowView.layer.shadowColor = UIColor.white.cgColor
         searchShadowView.layer.shadowOffset = CGSize(width: 0, height: 4)
-        searchShadowView.layer.shadowRadius = 12
+        searchShadowView.layer.shadowRadius = 20
         searchShadowView.layer.shadowOpacity = 0
-        searchShadowView.layer.cornerRadius = 12
+        searchShadowView.layer.cornerRadius = 20
         
         // Search text field
         searchTextField.placeholder = "ex. BTC, TSLA, SWPPX"
@@ -104,11 +104,12 @@ class SearchBarView: UIView {
     }
     
     // MARK: - Public Methods
+    
     func focusSearch() {
         isSearchFocused = true
         
         // Animate scale and effects
-        UIView.animate(withDuration: 0.3, delay: 0, usingSpringWithDamping: 0.8, initialSpringVelocity: 0.5, options: [.curveEaseInOut], animations: {
+        UIView.animate(withDuration: 1.0, delay: 0, usingSpringWithDamping: 0.8, initialSpringVelocity: 0.5, options: [.curveEaseInOut], animations: {
             self.searchContainer.transform = CGAffineTransform(scaleX: 1.05, y: 1.05)
             self.searchShadowView.layer.shadowOpacity = 0.3
         })
@@ -118,7 +119,7 @@ class SearchBarView: UIView {
         isSearchFocused = false
         
         // Animate back to normal state
-        UIView.animate(withDuration: 0.3, delay: 0, usingSpringWithDamping: 0.8, initialSpringVelocity: 0.5, options: [.curveEaseInOut], animations: {
+        UIView.animate(withDuration: 1.0, delay: 0, usingSpringWithDamping: 0.8, initialSpringVelocity: 0.5, options: [.curveEaseInOut], animations: {
             self.searchContainer.transform = CGAffineTransform(scaleX: 1.0, y: 1.0)
             self.searchShadowView.layer.shadowOpacity = 0
         })

@@ -8,23 +8,17 @@
 import UIKit
 import Combine
 
-class TradeViewController: UIViewController {
+class TradeViewController: BaseViewController {
     
-    // MARK: - UI Components (Layered Design)
+    // MARK: - UI Components
     
-    // Layer 1: Trade History (Bottom Layer)
-    private let historyContainer = UIView()
-    private let historyTitleLabel = UILabel()
-    private let openOrdersLabel = UILabel()
-    private let closedOrdersLabel = UILabel()
+    // Search Bar
+    private let searchBarView = SearchBarView()
     
-    // Layer 2: Blur Overlay (Middle Layer)
-    private let blurOverlay = UIVisualEffectView(effect: UIBlurEffect(style: .dark))
-    
-    // Layer 3: Search Bar (Top Layer - Highest Z-Index)
-    private let searchContainer = UIView()
-    private let searchTextField = UITextField()
-    private let searchShadowView = UIView()
+    // Search Results
+    private let searchResultsTableView = UITableView()
+    private let loadingIndicator = UIActivityIndicatorView(style: .medium)
+    private let noResultsLabel = UILabel()
     
     // MARK: - Services
     private let portfolioManager = PortfolioManager.shared
@@ -32,6 +26,10 @@ class TradeViewController: UIViewController {
     
     // MARK: - State
     private var isSearchFocused = false
+    private var searchResults: [SearchResult] = []
+    private var isLoading = false
+    private var searchDebounceTimer: Timer?
+    private var cancellables = Set<AnyCancellable>()
     
     // MARK: - Lifecycle
     override func viewDidLoad() {
@@ -46,231 +44,315 @@ class TradeViewController: UIViewController {
         super.viewWillDisappear(animated)
         // Clean up focused state when leaving the view
         if isSearchFocused {
-            searchTextField.resignFirstResponder()
-            unfocusSearch()
+            searchBarView.searchTextField.resignFirstResponder()
         }
     }
     
     // MARK: - UI Setup
     private func setupUI() {
-        view.backgroundColor = .black
         title = ""
-        navigationController?.navigationBar.prefersLargeTitles = false
-        navigationController?.navigationBar.barStyle = .black
         
-        // Setup layers in order (bottom to top)
-        setupHistoryLayer()
-        setupBlurOverlay()
+        // Setup search bar
         setupSearchLayer()
         
-        // Add tap gesture to handle tapping outside text field
-        let tapGesture = UITapGestureRecognizer(target: self, action: #selector(handleTapOutside))
+        // Setup search results table
+        setupSearchResultsTable()
+        
+        // Setup loading indicator
+        setupLoadingIndicator()
+        
+        // Setup no results label
+        setupNoResultsLabel()
+        
+        // Add tap gesture to handle tapping outside search field
+        let tapGesture = UITapGestureRecognizer(target: self, action: #selector(handleSearchTapOutside))
         view.addGestureRecognizer(tapGesture)
     }
     
-    private func setupHistoryLayer() {
-        // History container
-        historyContainer.translatesAutoresizingMaskIntoConstraints = false
-        
-        // History title
-        historyTitleLabel.text = "Trade History"
-        historyTitleLabel.font = .systemFont(ofSize: 20, weight: .semibold)
-        historyTitleLabel.textColor = .white
-        historyTitleLabel.translatesAutoresizingMaskIntoConstraints = false
-        
-        // Open orders label
-        openOrdersLabel.text = "Open Orders"
-        openOrdersLabel.font = .systemFont(ofSize: 16, weight: .medium)
-        openOrdersLabel.textColor = UIColor(red: 0.8, green: 0.8, blue: 0.8, alpha: 1.0)
-        openOrdersLabel.translatesAutoresizingMaskIntoConstraints = false
-        
-        // Closed orders label
-        closedOrdersLabel.text = "Closed Orders"
-        closedOrdersLabel.font = .systemFont(ofSize: 16, weight: .medium)
-        closedOrdersLabel.textColor = UIColor(red: 0.8, green: 0.8, blue: 0.8, alpha: 1.0)
-        closedOrdersLabel.translatesAutoresizingMaskIntoConstraints = false
-        
-        historyContainer.addSubview(historyTitleLabel)
-        historyContainer.addSubview(openOrdersLabel)
-        historyContainer.addSubview(closedOrdersLabel)
-        view.addSubview(historyContainer)
-    }
-    
-    private func setupBlurOverlay() {
-        blurOverlay.translatesAutoresizingMaskIntoConstraints = false
-        blurOverlay.alpha = 0 // Start hidden
-        view.addSubview(blurOverlay)
-    }
-    
     private func setupSearchLayer() {
-        // Search container
-        searchContainer.translatesAutoresizingMaskIntoConstraints = false
-        searchContainer.backgroundColor = .clear
-        searchContainer.layer.borderWidth = 1.0
-        searchContainer.layer.borderColor = UIColor.white.cgColor
-        searchContainer.layer.cornerRadius = 12
-        searchContainer.transform = CGAffineTransform(scaleX: 1.0, y: 1.0)
+        // Configure search bar
+        searchBarView.setPlaceholder("ex. BTC, TSLA, SWPPX")
+        searchBarView.delegate = self
+        searchBarView.translatesAutoresizingMaskIntoConstraints = false
         
-        // Search shadow view
-        searchShadowView.translatesAutoresizingMaskIntoConstraints = false
-        searchShadowView.backgroundColor = .clear
-        searchShadowView.layer.shadowColor = UIColor.white.cgColor
-        searchShadowView.layer.shadowOffset = CGSize(width: 0, height: 4)
-        searchShadowView.layer.shadowRadius = 12
-        searchShadowView.layer.shadowOpacity = 0
-        searchShadowView.layer.cornerRadius = 12
+        // Add to view
+        view.addSubview(searchBarView)
+    }
+    
+    private func setupSearchResultsTable() {
+        searchResultsTableView.translatesAutoresizingMaskIntoConstraints = false
+        searchResultsTableView.backgroundColor = .clear
+        searchResultsTableView.separatorStyle = .none
+        searchResultsTableView.register(SearchResultTableViewCell.self, forCellReuseIdentifier: "SearchResultCell")
+        searchResultsTableView.delegate = self
+        searchResultsTableView.dataSource = self
+        searchResultsTableView.isHidden = true
         
-        // Search text field
-        searchTextField.placeholder = "ex. BTC, TSLA, SWPPX"
-        searchTextField.font = .systemFont(ofSize: 16, weight: .medium)
-        searchTextField.textColor = .white
-        searchTextField.backgroundColor = .clear
-        searchTextField.borderStyle = .none
-        searchTextField.translatesAutoresizingMaskIntoConstraints = false
-        searchTextField.delegate = self
-        searchTextField.autocapitalizationType = .allCharacters
-        searchTextField.autocorrectionType = .no
-        searchTextField.spellCheckingType = .no
+        view.addSubview(searchResultsTableView)
+    }
+    
+    private func setupLoadingIndicator() {
+        loadingIndicator.translatesAutoresizingMaskIntoConstraints = false
+        loadingIndicator.color = .white
+        loadingIndicator.hidesWhenStopped = true
+        loadingIndicator.isHidden = true
         
-        // Custom placeholder color
-        searchTextField.attributedPlaceholder = NSAttributedString(
-            string: "ex. BTC, TSLA, SWPPX",
-            attributes: [NSAttributedString.Key.foregroundColor: UIColor(red: 0.6, green: 0.6, blue: 0.6, alpha: 1.0)]
-        )
+        view.addSubview(loadingIndicator)
+    }
+    
+    private func setupNoResultsLabel() {
+        noResultsLabel.translatesAutoresizingMaskIntoConstraints = false
+        noResultsLabel.text = "No results found"
+        noResultsLabel.textColor = .systemGray
+        noResultsLabel.font = .systemFont(ofSize: 16, weight: .medium)
+        noResultsLabel.textAlignment = .center
+        noResultsLabel.isHidden = true
         
-        // Add subviews to search container
-        searchContainer.addSubview(searchShadowView)
-        searchContainer.addSubview(searchTextField)
-        
-        // Add to view (highest z-index)
-        view.addSubview(searchContainer)
+        view.addSubview(noResultsLabel)
     }
     
     private func setupConstraints() {
         NSLayoutConstraint.activate([
-            // Layer 3: Search Container (Top - Highest Z-Index)
-            searchContainer.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 20),
-            searchContainer.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 20),
-            searchContainer.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20),
-            searchContainer.heightAnchor.constraint(equalToConstant: 50),
+            // Search Bar
+            searchBarView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 20),
+            searchBarView.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 20),
+            searchBarView.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20),
+            searchBarView.heightAnchor.constraint(equalToConstant: 50),
             
-            // Search shadow view
-            searchShadowView.topAnchor.constraint(equalTo: searchContainer.topAnchor),
-            searchShadowView.leadingAnchor.constraint(equalTo: searchContainer.leadingAnchor),
-            searchShadowView.trailingAnchor.constraint(equalTo: searchContainer.trailingAnchor),
-            searchShadowView.bottomAnchor.constraint(equalTo: searchContainer.bottomAnchor),
+            // Search Results Table
+            searchResultsTableView.topAnchor.constraint(equalTo: searchBarView.bottomAnchor, constant: 16),
+            searchResultsTableView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            searchResultsTableView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            searchResultsTableView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
             
-            // Search text field
-            searchTextField.topAnchor.constraint(equalTo: searchContainer.topAnchor, constant: 12),
-            searchTextField.leadingAnchor.constraint(equalTo: searchContainer.leadingAnchor, constant: 16),
-            searchTextField.trailingAnchor.constraint(equalTo: searchContainer.trailingAnchor, constant: -16),
-            searchTextField.bottomAnchor.constraint(equalTo: searchContainer.bottomAnchor, constant: -12),
+            // Loading Indicator
+            loadingIndicator.centerXAnchor.constraint(equalTo: searchResultsTableView.centerXAnchor),
+            loadingIndicator.centerYAnchor.constraint(equalTo: searchResultsTableView.centerYAnchor),
             
-            // Layer 1: History Container (Bottom) - Now properly spaced below search bar
-            historyContainer.topAnchor.constraint(equalTo: searchContainer.bottomAnchor, constant: 40),
-            historyContainer.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 20),
-            historyContainer.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20),
-            historyContainer.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -20),
-            
-            // History title
-            historyTitleLabel.topAnchor.constraint(equalTo: historyContainer.topAnchor),
-            historyTitleLabel.leadingAnchor.constraint(equalTo: historyContainer.leadingAnchor),
-            
-            // Open orders
-            openOrdersLabel.topAnchor.constraint(equalTo: historyTitleLabel.bottomAnchor, constant: 20),
-            openOrdersLabel.leadingAnchor.constraint(equalTo: historyContainer.leadingAnchor),
-            
-            // Closed orders
-            closedOrdersLabel.topAnchor.constraint(equalTo: openOrdersLabel.bottomAnchor, constant: 16),
-            closedOrdersLabel.leadingAnchor.constraint(equalTo: historyContainer.leadingAnchor),
-            
-            // Layer 2: Blur Overlay (Middle)
-            blurOverlay.topAnchor.constraint(equalTo: view.topAnchor),
-            blurOverlay.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            blurOverlay.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            blurOverlay.bottomAnchor.constraint(equalTo: view.bottomAnchor)
+            // No Results Label
+            noResultsLabel.centerXAnchor.constraint(equalTo: searchResultsTableView.centerXAnchor),
+            noResultsLabel.centerYAnchor.constraint(equalTo: searchResultsTableView.centerYAnchor)
         ])
     }
     
     // MARK: - Search Focus Handling
-    @objc private func handleTapOutside(_ gesture: UITapGestureRecognizer) {
+    @objc private func handleSearchTapOutside(_ gesture: UITapGestureRecognizer) {
         let location = gesture.location(in: view)
-        let searchFrame = searchContainer.convert(searchContainer.bounds, to: view)
+        let searchFrame = searchBarView.convert(searchBarView.bounds, to: view)
         
         // If tap is outside the search container, unfocus
         if !searchFrame.contains(location) && isSearchFocused {
-            searchTextField.resignFirstResponder()
+            searchBarView.searchTextField.resignFirstResponder()
+            searchBarView.unfocusSearch()
         }
     }
     
-    private func focusSearch() {
-        isSearchFocused = true
+    // MARK: - Search Implementation
+    private func performSearch(query: String) {
+        guard !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            hideSearchResults()
+            return
+        }
         
-        // Animate scale and effects
-        UIView.animate(withDuration: 0.3, delay: 0, usingSpringWithDamping: 0.8, initialSpringVelocity: 0.5, options: [.curveEaseInOut], animations: {
-            self.searchContainer.transform = CGAffineTransform(scaleX: 1.05, y: 1.05)
-            self.searchShadowView.layer.shadowOpacity = 0.3
-            self.blurOverlay.alpha = 0.6
-        })
+        // Cancel previous timer
+        searchDebounceTimer?.invalidate()
+        
+        // Set new timer for debouncing
+        searchDebounceTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: false) { [weak self] _ in
+            self?.executeSearch(query: query)
+        }
     }
     
-    private func unfocusSearch() {
-        isSearchFocused = false
+    private func executeSearch(query: String) {
+        print("🚀 Executing search for query: '\(query)'")
+        isLoading = true
+        showLoadingIndicator()
         
-        // Animate back to normal state
-        UIView.animate(withDuration: 0.3, delay: 0, usingSpringWithDamping: 0.8, initialSpringVelocity: 0.5, options: [.curveEaseInOut], animations: {
-            self.searchContainer.transform = CGAffineTransform(scaleX: 1.0, y: 1.0)
-            self.searchShadowView.layer.shadowOpacity = 0
-            self.blurOverlay.alpha = 0
-        })
+        // Search stocks and crypto separately to handle errors gracefully
+        let stockSearch = marketDataService.searchStocks(query: query)
+            .catch { error in 
+                print("❌ Stock search failed: \(error)")
+                return Just([Stock]()).setFailureType(to: Error.self).eraseToAnyPublisher() 
+            }
+        
+        let cryptoSearch = marketDataService.searchCrypto(query: query)
+            .catch { error in 
+                print("❌ Crypto search failed: \(error)")
+                return Just([Cryptocurrency]()).setFailureType(to: Error.self).eraseToAnyPublisher() 
+            }
+        
+        Publishers.CombineLatest(stockSearch, cryptoSearch)
+            .map { (stocks: [Stock], cryptos: [Cryptocurrency]) in
+                print("📊 Search results - Stocks: \(stocks.count), Cryptos: \(cryptos.count)")
+                var results: [SearchResult] = []
+                
+                // Add stocks
+                for stock in stocks {
+                    print("📈 Adding stock: \(stock.symbol) - \(stock.name)")
+                    results.append(SearchResult(
+                        symbol: stock.symbol,
+                        name: stock.name,
+                        assetType: .stock,
+                        currentPrice: stock.currentPrice,
+                        changePercent: stock.changePercent
+                    ))
+                }
+                
+                // Add cryptos
+                for crypto in cryptos {
+                    print("🪙 Adding crypto: \(crypto.symbol) - \(crypto.name)")
+                    results.append(SearchResult(
+                        symbol: crypto.symbol,
+                        name: crypto.name,
+                        assetType: .cryptocurrency,
+                        currentPrice: crypto.currentPrice,
+                        changePercent: crypto.changePercent24h
+                    ))
+                }
+                
+                print("🎯 Total search results: \(results.count)")
+                return results
+            }
+            .receive(on: DispatchQueue.main)
+            .sink(
+                receiveCompletion: { [weak self] completion in
+                    self?.isLoading = false
+                    self?.hideLoadingIndicator()
+                    
+                    if case .failure(let error) = completion {
+                        print("❌ Search completion error: \(error)")
+                        self?.showNoResults()
+                    } else {
+                        print("✅ Search completed successfully")
+                    }
+                },
+                receiveValue: { [weak self] results in
+                    print("📱 Updating UI with \(results.count) results")
+                    self?.searchResults = results
+                    self?.updateSearchResultsDisplay()
+                }
+            )
+            .store(in: &cancellables)
+    }
+    
+    private func showLoadingIndicator() {
+        loadingIndicator.isHidden = false
+        loadingIndicator.startAnimating()
+        searchResultsTableView.isHidden = true
+        noResultsLabel.isHidden = true
+        
+        UIView.animate(withDuration: 0.3) {
+            self.loadingIndicator.alpha = 1.0
+        }
+    }
+    
+    private func hideLoadingIndicator() {
+        UIView.animate(withDuration: 0.3) {
+            self.loadingIndicator.alpha = 0.0
+        } completion: { _ in
+            self.loadingIndicator.stopAnimating()
+            self.loadingIndicator.isHidden = true
+        }
+    }
+    
+    private func updateSearchResultsDisplay() {
+        if searchResults.isEmpty {
+            showNoResults()
+        } else {
+            showSearchResults()
+        }
+    }
+    
+    private func showSearchResults() {
+        noResultsLabel.isHidden = true
+        searchResultsTableView.isHidden = false
+        
+        UIView.animate(withDuration: 0.3) {
+            self.searchResultsTableView.alpha = 1.0
+        }
+        
+        searchResultsTableView.reloadData()
+    }
+    
+    private func showNoResults() {
+        searchResultsTableView.isHidden = true
+        noResultsLabel.isHidden = false
+        
+        UIView.animate(withDuration: 0.3) {
+            self.noResultsLabel.alpha = 1.0
+        }
+    }
+    
+    private func hideSearchResults() {
+        searchResults = []
+        
+        UIView.animate(withDuration: 0.3) {
+            self.searchResultsTableView.alpha = 0.0
+            self.noResultsLabel.alpha = 0.0
+        } completion: { _ in
+            self.searchResultsTableView.isHidden = true
+            self.noResultsLabel.isHidden = true
+        }
     }
     
     // MARK: - Data Loading
     private func setupObservers() {
-        // Observe portfolio changes
-        portfolioManager.$currentPortfolio
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in
-                // Will be implemented in next steps
-            }
-            .store(in: &cancellables)
+        // No observers needed for search-only view
     }
     
     private func loadInitialData() {
-        // Will be implemented in next steps
+        // No data to load for search-only view
     }
     
     // MARK: - Helpers
-    private func formatCurrency(_ amount: Double) -> String {
-        let formatter = NumberFormatter()
-        formatter.numberStyle = .currency
-        formatter.currencyCode = "USD"
-        return formatter.string(from: NSNumber(value: amount)) ?? "$0.00"
-    }
-    
-    private var cancellables = Set<AnyCancellable>()
 }
 
-// MARK: - UITextFieldDelegate
-extension TradeViewController: UITextFieldDelegate {
-    func textFieldDidBeginEditing(_ textField: UITextField) {
-        focusSearch()
+// MARK: - SearchBarViewDelegate
+extension TradeViewController: SearchBarViewDelegate {
+    func searchBarDidBeginEditing(_ searchBar: SearchBarView) {
+        isSearchFocused = true
+        showBlurOverlay()
     }
     
-    func textFieldDidEndEditing(_ textField: UITextField) {
-        unfocusSearch()
+    func searchBarDidEndEditing(_ searchBar: SearchBarView) {
+        isSearchFocused = false
+        hideBlurOverlay()
     }
     
-    func textFieldShouldReturn(_ textField: UITextField) -> Bool {
-        textField.resignFirstResponder()
-        return true
+    func searchBar(_ searchBar: SearchBarView, textDidChange text: String) {
+        performSearch(query: text)
+    }
+}
+
+// MARK: - UITableViewDataSource
+extension TradeViewController: UITableViewDataSource {
+    func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
+        return searchResults.count
     }
     
-    func textField(_ textField: UITextField, shouldChangeCharactersIn range: NSRange, replacementString string: String) -> Bool {
-        // Convert input to uppercase
-        let currentText = textField.text ?? ""
-        let newText = (currentText as NSString).replacingCharacters(in: range, with: string.uppercased())
-        textField.text = newText
-        return false // Prevent default behavior since we're manually setting the text
+    func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
+        let cell = tableView.dequeueReusableCell(withIdentifier: "SearchResultCell", for: indexPath) as! SearchResultTableViewCell
+        let result = searchResults[indexPath.row]
+        cell.configure(with: result)
+        return cell
     }
-} 
+}
+
+// MARK: - UITableViewDelegate
+extension TradeViewController: UITableViewDelegate {
+    func tableView(_ tableView: UITableView, heightForRowAt indexPath: IndexPath) -> CGFloat {
+        return 80
+    }
+    
+    func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
+        tableView.deselectRow(at: indexPath, animated: true)
+        let result = searchResults[indexPath.row]
+        
+        // TODO: Navigate to detail view or trading view
+        print("Selected: \(result.symbol) - \(result.name)")
+    }
+}
+
+
+
+ 

@@ -8,7 +8,7 @@
 import UIKit
 import Combine
 
-class WatchlistViewController: UIViewController {
+class WatchlistViewController: BaseViewController {
     
     // MARK: - UI Components (Layered Design)
     
@@ -17,8 +17,7 @@ class WatchlistViewController: UIViewController {
     private let tableView = UITableView()
     private let emptyStateLabel = UILabel()
     
-    // Layer 2: Blur Overlay (Middle Layer)
-    private let blurOverlay = UIVisualEffectView(effect: UIBlurEffect(style: .dark))
+    // Layer 2: Blur Overlay (Middle Layer) - Now handled by BaseViewController
     
     // Layer 3: Search Bar (Top Layer - Highest Z-Index)
     private let searchBarView = SearchBarView()
@@ -54,18 +53,15 @@ class WatchlistViewController: UIViewController {
     
     // MARK: - UI Setup
     private func setupUI() {
-        view.backgroundColor = .black
         title = ""
-        navigationController?.navigationBar.prefersLargeTitles = false
-        navigationController?.navigationBar.barStyle = .black
         
         // Setup layers in order (bottom to top)
         setupContentLayer()
-        setupBlurOverlay()
+        setupBlurOverlayLayer()
         setupSearchLayer()
         
-        // Add tap gesture to handle tapping outside text field
-        let tapGesture = UITapGestureRecognizer(target: self, action: #selector(handleTapOutside))
+        // Add tap gesture to handle tapping outside search field
+        let tapGesture = UITapGestureRecognizer(target: self, action: #selector(handleSearchTapOutside))
         view.addGestureRecognizer(tapGesture)
     }
     
@@ -91,10 +87,8 @@ class WatchlistViewController: UIViewController {
         contentContainer.addSubview(emptyStateLabel)
     }
     
-    private func setupBlurOverlay() {
-        blurOverlay.translatesAutoresizingMaskIntoConstraints = false
-        blurOverlay.alpha = 0 // Start hidden
-        view.addSubview(blurOverlay)
+    private func setupBlurOverlayLayer() {
+        setupBlurOverlay()
     }
     
     private func setupSearchLayer() {
@@ -133,16 +127,12 @@ class WatchlistViewController: UIViewController {
             emptyStateLabel.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor, constant: 32),
             emptyStateLabel.trailingAnchor.constraint(equalTo: contentContainer.trailingAnchor, constant: -32),
             
-            // Layer 2: Blur Overlay (Middle)
-            blurOverlay.topAnchor.constraint(equalTo: view.topAnchor),
-            blurOverlay.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            blurOverlay.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            blurOverlay.bottomAnchor.constraint(equalTo: view.bottomAnchor)
+            // Layer 2: Blur Overlay (Middle) - Constraints handled by BaseViewController
         ])
     }
     
     // MARK: - Search Focus Handling
-    @objc private func handleTapOutside(_ gesture: UITapGestureRecognizer) {
+    @objc private func handleSearchTapOutside(_ gesture: UITapGestureRecognizer) {
         let location = gesture.location(in: view)
         let searchFrame = searchBarView.convert(searchBarView.bounds, to: view)
         
@@ -179,20 +169,12 @@ class WatchlistViewController: UIViewController {
 extension WatchlistViewController: SearchBarViewDelegate {
     func searchBarDidBeginEditing(_ searchBar: SearchBarView) {
         isSearchFocused = true
-        
-        // Animate blur overlay
-        UIView.animate(withDuration: 0.3, delay: 0, usingSpringWithDamping: 0.8, initialSpringVelocity: 0.5, options: [.curveEaseInOut], animations: {
-            self.blurOverlay.alpha = 0.6
-        })
+        showBlurOverlay()
     }
     
     func searchBarDidEndEditing(_ searchBar: SearchBarView) {
         isSearchFocused = false
-        
-        // Animate blur overlay back
-        UIView.animate(withDuration: 0.3, delay: 0, usingSpringWithDamping: 0.8, initialSpringVelocity: 0.5, options: [.curveEaseInOut], animations: {
-            self.blurOverlay.alpha = 0
-        })
+        hideBlurOverlay()
     }
     
     func searchBar(_ searchBar: SearchBarView, textDidChange text: String) {

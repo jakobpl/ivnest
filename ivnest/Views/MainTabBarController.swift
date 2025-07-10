@@ -67,45 +67,15 @@ class MainTabBarController: UITabBarController {
             selectedImage: UIImage(systemName: "eye.fill")
         )
         
-        // Analytics Tab (placeholder for future)
-        let analyticsVC = AnalyticsViewController()
-        let analyticsNav = UINavigationController(rootViewController: analyticsVC)
-        analyticsNav.tabBarItem = UITabBarItem(
+        // Search Tab
+        let searchVC = SearchViewController()
+        let searchNav = UINavigationController(rootViewController: searchVC)
+        searchNav.tabBarItem = UITabBarItem(
             title: "",
-            image: UIImage(systemName: "chart.bar.fill"),
-            selectedImage: UIImage(systemName: "chart.bar.fill")
+            image: UIImage(systemName: "magnifyingglass"),
+            selectedImage: UIImage(systemName: "magnifyingglass")
         )
         
-        viewControllers = [portfolioNav, tradeNav, watchlistNav, analyticsNav]
-    }
-}
-
-// MARK: - Analytics View Controller (Placeholder)
-class AnalyticsViewController: UIViewController {
-    
-    override func viewDidLoad() {
-        super.viewDidLoad()
-        setupUI()
-    }
-    
-    private func setupUI() {
-        view.backgroundColor = .black
-        title = "Analytics"
-        navigationController?.navigationBar.prefersLargeTitles = true
-        navigationController?.navigationBar.barStyle = .black
-        
-        let label = UILabel()
-        label.text = "Analytics Coming Soon"
-        label.textAlignment = .center
-        label.font = .systemFont(ofSize: 18, weight: .medium)
-        label.textColor = UIColor(red: 0.7, green: 0.7, blue: 0.7, alpha: 1.0)
-        label.translatesAutoresizingMaskIntoConstraints = false
-        
-        view.addSubview(label)
-        
-        NSLayoutConstraint.activate([
-            label.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            label.centerYAnchor.constraint(equalTo: view.centerYAnchor)
-        ])
+        viewControllers = [portfolioNav, tradeNav, watchlistNav, searchNav]
     }
 } 

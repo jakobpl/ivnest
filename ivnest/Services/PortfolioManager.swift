@@ -8,6 +8,10 @@
 import Foundation
 import Combine
 
+extension Notification.Name {
+    static let portfolioDataUpdated = Notification.Name("portfolioDataUpdated")
+}
+
 class PortfolioManager: ObservableObject {
     static let shared = PortfolioManager()
     
@@ -20,13 +24,40 @@ class PortfolioManager: ObservableObject {
     private let watchlistKey = "savedWatchlist"
     
     private init() {
-        // Load saved portfolios or create default
+        // Create default portfolio with historical data
+        let calendar = Calendar.current
+        let now = Date()
+        var historicalData: [PortfolioDataPoint] = []
+        
+        // Add historical data points for the last 30 days with 0 values
+        for i in 0..<30 {
+            if let date = calendar.date(byAdding: .day, value: -i, to: now) {
+                let dataPoint = PortfolioDataPoint(
+                    date: date,
+                    value: 0.0,
+                    change: 0.0,
+                    changePercent: 0.0
+                )
+                historicalData.append(dataPoint)
+            }
+        }
+        
+        let defaultPortfolio = Portfolio(
+            name: "My Portfolio",
+            cash: 0.0,
+            holdings: [],
+            totalValue: 0.0,
+            totalReturn: 0.0,
+            totalReturnPercentage: 0.0
+        )
+        
+        // Load saved portfolios or create default with 0 balance
         if let data = userDefaults.data(forKey: portfolioKey),
            let savedPortfolios = try? JSONDecoder().decode([Portfolio].self, from: data) {
             self.portfolios = savedPortfolios
-            self.currentPortfolio = savedPortfolios.first ?? Portfolio(name: "My Portfolio")
+            self.currentPortfolio = savedPortfolios.first ?? defaultPortfolio
         } else {
-            self.currentPortfolio = Portfolio(name: "My Portfolio")
+            self.currentPortfolio = defaultPortfolio
             self.portfolios = [currentPortfolio]
         }
         
@@ -35,14 +66,27 @@ class PortfolioManager: ObservableObject {
            let savedWatchlist = try? JSONDecoder().decode([WatchlistItem].self, from: data) {
             self.watchlist = savedWatchlist
         }
+        
+        // Start real-time updates
+        startRealTimeUpdates()
     }
     
     // MARK: - Portfolio Management
     
-    func createPortfolio(name: String, initialBalance: Double = 10000.0) {
+
+    
+    func createPortfolio(name: String, initialBalance: Double = 0.0) {
         let newPortfolio = Portfolio(name: name, initialBalance: initialBalance)
         portfolios.append(newPortfolio)
         savePortfolios()
+    }
+    
+    func resetPortfolio() {
+        currentPortfolio.balance = 0.0
+        currentPortfolio.holdings = []
+        currentPortfolio.transactions = []
+        currentPortfolio.updatePortfolioValue()
+        updateCurrentPortfolio()
     }
     
     func switchPortfolio(_ portfolio: Portfolio) {
@@ -54,7 +98,16 @@ class PortfolioManager: ObservableObject {
     func deletePortfolio(_ portfolio: Portfolio) {
         portfolios.removeAll { $0.id == portfolio.id }
         if currentPortfolio.id == portfolio.id {
-            currentPortfolio = portfolios.first ?? Portfolio(name: "My Portfolio")
+            // Create default portfolio inline
+            let defaultPortfolio = Portfolio(
+                name: "My Portfolio",
+                cash: 0.0,
+                holdings: [],
+                totalValue: 0.0,
+                totalReturn: 0.0,
+                totalReturnPercentage: 0.0
+            )
+            currentPortfolio = portfolios.first ?? defaultPortfolio
         }
         savePortfolios()
     }
@@ -310,6 +363,9 @@ class PortfolioManager: ObservableObject {
             portfolios[index] = currentPortfolio
         }
         savePortfolios()
+        
+        // Notify that portfolio data has changed
+        NotificationCenter.default.post(name: .portfolioDataUpdated, object: nil)
     }
     
     private func savePortfolios() {
@@ -322,5 +378,51 @@ class PortfolioManager: ObservableObject {
         if let data = try? JSONEncoder().encode(watchlist) {
             userDefaults.set(data, forKey: watchlistKey)
         }
+    }
+    
+    // MARK: - Real-time Updates
+    
+    private func startRealTimeUpdates() {
+        // Listen for price updates
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleHoldingPriceUpdate),
+            name: .holdingPriceUpdated,
+            object: nil
+        )
+        
+        // Update portfolio holdings every 30 seconds
+        Timer.scheduledTimer(withTimeInterval: 30.0, repeats: true) { [weak self] _ in
+            self?.updatePortfolioHoldings()
+        }
+    }
+    
+    @objc private func handleHoldingPriceUpdate(_ notification: Notification) {
+        guard let userInfo = notification.userInfo,
+              let symbol = userInfo["symbol"] as? String,
+              let assetType = userInfo["assetType"] as? AssetType,
+              let currentPrice = userInfo["currentPrice"] as? Double else {
+            return
+        }
+        
+        // Update holding price
+        if let index = currentPortfolio.holdings.firstIndex(where: { $0.symbol == symbol && $0.assetType == assetType }) {
+            currentPortfolio.holdings[index].updateCurrentPrice(currentPrice)
+            updateCurrentPortfolio()
+        }
+        
+        // Update watchlist price
+        if let index = watchlist.firstIndex(where: { $0.symbol == symbol && $0.assetType == assetType }) {
+            let oldPrice = watchlist[index].currentPrice
+            watchlist[index].currentPrice = currentPrice
+            watchlist[index].priceChange = currentPrice - oldPrice
+            watchlist[index].priceChangePercent = oldPrice > 0 ? ((currentPrice - oldPrice) / oldPrice) * 100 : 0.0
+            saveWatchlist()
+        }
+    }
+    
+    private func updatePortfolioHoldings() {
+        // Update all holdings with current market data
+        MarketDataService.shared.updatePortfolioHoldings(currentPortfolio.holdings)
     }
 } 

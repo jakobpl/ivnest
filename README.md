@@ -29,7 +29,7 @@ A comprehensive iOS app for simulating stock and cryptocurrency investments with
 
 - **Language**: Swift 5.0+
 - **Framework**: UIKit
-- **Architecture**: MVC (Model-View-Controller)
+- **Architecture**: MVC (Model-View-Controller) 
 - **Data Persistence**: Core Data
 - **Networking**: URLSession for API calls
 - **Charts**: Core Graphics for custom charting

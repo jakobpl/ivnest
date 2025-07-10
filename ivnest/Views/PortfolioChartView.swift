@@ -6,6 +6,8 @@
 //
 
 import UIKit
+import Foundation
+import ivnest // If your models are in a module named ivnest
 
 protocol PortfolioChartViewDelegate: AnyObject {
     func didSelectTimePeriod(_ period: TimePeriod)
@@ -52,19 +54,12 @@ class PortfolioChartView: UIView {
     private var chartLayer: CAShapeLayer?
     private var gradientLayer: CAGradientLayer?
     
-    struct PortfolioDataPoint {
-        let date: Date
-        let value: Double
-        let change: Double
-        let changePercent: Double
-    }
-    
     // MARK: - Initialization
     override init(frame: CGRect) {
         super.init(frame: frame)
         setupUI()
         setupConstraints()
-        generateMockData()
+        generateEmptyData()
     }
     
     required init?(coder: NSCoder) {
@@ -125,15 +120,18 @@ class PortfolioChartView: UIView {
         button.setTitleColor(UIColor(red: 0.7, green: 0.7, blue: 0.7, alpha: 1.0), for: .normal)
         button.setTitleColor(.white, for: .selected)
         button.titleLabel?.font = .systemFont(ofSize: 12, weight: .medium)
-        button.backgroundColor = UIColor(red: 0.15, green: 0.15, blue: 0.15, alpha: 1.0)
+        button.backgroundColor = .clear
         button.layer.cornerRadius = 6
+        button.layer.borderWidth = 0
+        button.layer.borderColor = UIColor.clear.cgColor
         button.tag = TimePeriod.allCases.firstIndex(of: period) ?? 0
         button.addTarget(self, action: #selector(timePeriodButtonTapped(_:)), for: .touchUpInside)
         
         // Set initial selection
         if period == selectedPeriod {
             button.isSelected = true
-            button.backgroundColor = UIColor(red: 0.2, green: 0.4, blue: 0.8, alpha: 1.0)
+            button.layer.borderWidth = 1
+            button.layer.borderColor = UIColor.white.cgColor
         }
         
         return button
@@ -173,15 +171,25 @@ class PortfolioChartView: UIView {
         let selectedIndex = sender.tag
         let newPeriod = TimePeriod.allCases[selectedIndex]
         
-        // Update button states
+        // Update button states with animation
         for (index, button) in timePeriodStackView.arrangedSubviews.enumerated() {
             if let button = button as? UIButton {
                 button.isSelected = index == selectedIndex
-                if button.isSelected {
-                    button.backgroundColor = UIColor(red: 0.2, green: 0.4, blue: 0.8, alpha: 1.0)
-                } else {
-                    button.backgroundColor = UIColor(red: 0.15, green: 0.15, blue: 0.15, alpha: 1.0)
-                }
+                
+                // Animate border and color changes
+                UIView.animate(withDuration: 0.3, delay: 0, options: [.curveEaseInOut], animations: {
+                    if button.isSelected {
+                        button.backgroundColor = .clear
+                        button.layer.borderWidth = 1
+                        button.layer.borderColor = UIColor.white.cgColor
+                        button.setTitleColor(.white, for: .normal)
+                    } else {
+                        button.backgroundColor = .clear
+                        button.layer.borderWidth = 0
+                        button.layer.borderColor = UIColor.clear.cgColor
+                        button.setTitleColor(UIColor(red: 0.7, green: 0.7, blue: 0.7, alpha: 1.0), for: .normal)
+                    }
+                })
             }
         }
         
@@ -191,29 +199,21 @@ class PortfolioChartView: UIView {
     }
     
     // MARK: - Data Management
-    private func generateMockData() {
+    private func generateEmptyData() {
         let calendar = Calendar.current
         let now = Date()
         
         portfolioData = []
-        let baseValue = 10000.0
-        var currentValue = baseValue
         
+        // Create empty data for the last 365 days
         for i in 0..<365 {
             let date = calendar.date(byAdding: .day, value: -i, to: now) ?? now
             
-            // Simulate realistic portfolio growth with some volatility
-            let dailyChange = Double.random(in: -0.05...0.08) // -5% to +8% daily change
-            currentValue *= (1 + dailyChange)
-            
-            let change = currentValue - baseValue
-            let changePercent = (change / baseValue) * 100
-            
             let dataPoint = PortfolioDataPoint(
                 date: date,
-                value: currentValue,
-                change: change,
-                changePercent: changePercent
+                value: 0.0,
+                change: 0.0,
+                changePercent: 0.0
             )
             
             portfolioData.append(dataPoint)
@@ -224,7 +224,15 @@ class PortfolioChartView: UIView {
     }
     
     private func updateValueLabels() {
-        guard let latestData = portfolioData.last else { return }
+        guard let latestData = portfolioData.last else { 
+            // Show 0 values when no data
+            valueLabel.text = FormattingUtils.formatCurrency(0.0)
+            changeLabel.text = FormattingUtils.formatCurrency(0.0)
+            changeLabel.textColor = .systemGray
+            changePercentLabel.text = "0.00%"
+            changePercentLabel.textColor = .systemGray
+            return 
+        }
         
         valueLabel.text = FormattingUtils.formatCurrency(latestData.value)
         changeLabel.text = FormattingUtils.formatCurrency(latestData.change)
@@ -257,7 +265,11 @@ class PortfolioChartView: UIView {
     }
     
     private func drawChart(with data: [PortfolioDataPoint]) {
-        guard !data.isEmpty else { return }
+        guard !data.isEmpty else { 
+            // Draw empty chart
+            drawEmptyChart()
+            return 
+        }
         
         let chartWidth = chartView.bounds.width
         let chartHeight = chartView.bounds.height
@@ -328,6 +340,32 @@ class PortfolioChartView: UIView {
         animateChart()
     }
     
+    private func drawEmptyChart() {
+        // Remove existing layers
+        chartLayer?.removeFromSuperlayer()
+        gradientLayer?.removeFromSuperlayer()
+        
+        let chartWidth = chartView.bounds.width
+        let chartHeight = chartView.bounds.height
+        
+        guard chartWidth > 0 && chartHeight > 0 else { return }
+        
+        // Create a flat line at the bottom
+        let path = UIBezierPath()
+        path.move(to: CGPoint(x: 0, y: chartHeight))
+        path.addLine(to: CGPoint(x: chartWidth, y: chartHeight))
+        
+        // Create the line layer
+        let lineLayer = CAShapeLayer()
+        lineLayer.path = path.cgPath
+        lineLayer.strokeColor = UIColor(red: 0.7, green: 0.7, blue: 0.7, alpha: 0.5).cgColor
+        lineLayer.lineWidth = 1
+        lineLayer.lineCap = .round
+        
+        chartView.layer.addSublayer(lineLayer)
+        self.chartLayer = lineLayer
+    }
+    
     private func animateChart() {
         guard let chartLayer = chartLayer else { return }
         
@@ -360,6 +398,16 @@ class PortfolioChartView: UIView {
         
         updateValueLabels()
         updateChart()
+    }
+    
+    func updateWithPortfolioData(_ portfolioData: [PortfolioDataPoint]) {
+        self.portfolioData = portfolioData
+        updateValueLabels()
+        updateChart()
+    }
+    
+    func updateWithEmptyPortfolio() {
+        generateEmptyData()
     }
     
     override func layoutSubviews() {

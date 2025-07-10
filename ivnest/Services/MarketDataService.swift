@@ -11,8 +11,15 @@ import Combine
 class MarketDataService: ObservableObject {
     static let shared = MarketDataService()
     
-    // API Keys - Replace with your actual API keys
-    private let alphaVantageAPIKey = "YOUR_ALPHA_VANTAGE_API_KEY"
+    // API Keys - Read from Info.plist
+    private var alphaVantageAPIKey: String {
+        guard let path = Bundle.main.path(forResource: "Info", ofType: "plist"),
+              let plist = NSDictionary(contentsOfFile: path),
+              let apiKey = plist["API_KEY"] as? String else {
+            fatalError("API_KEY not found in Info.plist")
+        }
+        return apiKey
+    }
     private let coinGeckoBaseURL = "https://api.coingecko.com/api/v3"
     
     @Published var popularStocks: [Stock] = []
@@ -58,17 +65,40 @@ class MarketDataService: ObservableObject {
     }
     
     func searchStocks(query: String) -> AnyPublisher<[Stock], Error> {
-        let urlString = "https://www.alphavantage.co/query?function=SYMBOL_SEARCH&keywords=\(query)&apikey=\(alphaVantageAPIKey)"
+        let encodedQuery = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? query
+        let urlString = "https://www.alphavantage.co/query?function=SYMBOL_SEARCH&keywords=\(encodedQuery)&apikey=\(alphaVantageAPIKey)"
+        
+        print("🔍 Searching stocks for query: '\(query)'")
+        print("🔗 URL: \(urlString)")
         
         guard let url = URL(string: urlString) else {
+            print("❌ Invalid URL for stock search")
             return Fail(error: NetworkError.invalidURL)
                 .eraseToAnyPublisher()
         }
         
         return URLSession.shared.dataTaskPublisher(for: url)
             .map(\.data)
+            .handleEvents(receiveOutput: { data in
+                print("📦 Received \(data.count) bytes for stock search")
+                if let jsonString = String(data: data, encoding: .utf8) {
+                    print("📄 Response: \(jsonString)")
+                    
+                    // Check for Alpha Vantage error messages
+                    if jsonString.contains("\"Note\":") {
+                        print("⚠️ Alpha Vantage API limit reached or error")
+                    }
+                    if jsonString.contains("\"Error Message\":") {
+                        print("⚠️ Alpha Vantage API error")
+                    }
+                }
+            })
             .decode(type: SymbolSearchResponse.self, decoder: JSONDecoder())
             .map { response in
+                print("✅ Found \(response.bestMatches.count) stock matches")
+                for match in response.bestMatches {
+                    print("   📈 \(match.symbol) - \(match.name)")
+                }
                 return response.bestMatches.map { match in
                     Stock(
                         symbol: match.symbol,
@@ -83,6 +113,18 @@ class MarketDataService: ObservableObject {
                         low: nil,
                         open: nil
                     )
+                }
+            }
+            .catch { error in
+                print("❌ Stock search error: \(error)")
+                return Fail<[Stock], Error>(error: error).eraseToAnyPublisher()
+            }
+            .flatMap { (stocks: [Stock]) -> AnyPublisher<[Stock], Error> in
+                if stocks.isEmpty {
+                    print("🔍 No API results, trying fallback search for: \(query)")
+                    return self.fallbackStockSearch(query: query)
+                } else {
+                    return Just(stocks).setFailureType(to: Error.self).eraseToAnyPublisher()
                 }
             }
             .eraseToAnyPublisher()
@@ -120,17 +162,32 @@ class MarketDataService: ObservableObject {
     }
     
     func searchCrypto(query: String) -> AnyPublisher<[Cryptocurrency], Error> {
-        let urlString = "\(coinGeckoBaseURL)/search?query=\(query)"
+        let encodedQuery = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? query
+        let urlString = "\(coinGeckoBaseURL)/search?query=\(encodedQuery)"
+        
+        print("🔍 Searching crypto for query: '\(query)'")
+        print("🔗 URL: \(urlString)")
         
         guard let url = URL(string: urlString) else {
+            print("❌ Invalid URL for crypto search")
             return Fail(error: NetworkError.invalidURL)
                 .eraseToAnyPublisher()
         }
         
         return URLSession.shared.dataTaskPublisher(for: url)
             .map(\.data)
+            .handleEvents(receiveOutput: { data in
+                print("📦 Received \(data.count) bytes for crypto search")
+                if let jsonString = String(data: data, encoding: .utf8) {
+                    print("📄 Response: \(jsonString)")
+                }
+            })
             .decode(type: CoinGeckoSearchResponse.self, decoder: JSONDecoder())
             .map { response in
+                print("✅ Found \(response.coins.count) crypto matches")
+                for coin in response.coins.prefix(10) {
+                    print("   🪙 \(coin.symbol.uppercased()) - \(coin.name)")
+                }
                 return response.coins.prefix(10).map { coin in
                     Cryptocurrency(
                         symbol: coin.symbol.uppercased(),
@@ -146,59 +203,293 @@ class MarketDataService: ObservableObject {
                     )
                 }
             }
+            .catch { error in
+                print("❌ Crypto search error: \(error)")
+                return Fail<[Cryptocurrency], Error>(error: error).eraseToAnyPublisher()
+            }
+            .flatMap { (cryptos: [Cryptocurrency]) -> AnyPublisher<[Cryptocurrency], Error> in
+                if cryptos.isEmpty {
+                    print("🔍 No API results, trying fallback crypto search for: \(query)")
+                    return self.fallbackCryptoSearch(query: query)
+                } else {
+                    return Just(cryptos).setFailureType(to: Error.self).eraseToAnyPublisher()
+                }
+            }
             .eraseToAnyPublisher()
     }
     
     // MARK: - Popular Assets
     
     private func loadPopularAssets() {
-        // Load popular stocks (mock data for now)
-        popularStocks = [
-            Stock(symbol: "AAPL", name: "Apple Inc.", currentPrice: 150.0, previousClose: 148.0, change: 2.0, changePercent: 1.35, marketCap: 2500000000000, volume: 50000000, high: 152.0, low: 147.0, open: 149.0),
-            Stock(symbol: "GOOGL", name: "Alphabet Inc.", currentPrice: 2800.0, previousClose: 2750.0, change: 50.0, changePercent: 1.82, marketCap: 1800000000000, volume: 2000000, high: 2820.0, low: 2740.0, open: 2760.0),
-            Stock(symbol: "MSFT", name: "Microsoft Corporation", currentPrice: 320.0, previousClose: 315.0, change: 5.0, changePercent: 1.59, marketCap: 2400000000000, volume: 30000000, high: 325.0, low: 314.0, open: 316.0),
-            Stock(symbol: "TSLA", name: "Tesla Inc.", currentPrice: 800.0, previousClose: 820.0, change: -20.0, changePercent: -2.44, marketCap: 800000000000, volume: 15000000, high: 825.0, low: 795.0, open: 815.0),
-            Stock(symbol: "AMZN", name: "Amazon.com Inc.", currentPrice: 3300.0, previousClose: 3250.0, change: 50.0, changePercent: 1.54, marketCap: 1600000000000, volume: 8000000, high: 3320.0, low: 3240.0, open: 3260.0)
-        ]
+        // Load popular stocks with real data
+        let popularSymbols = ["AAPL", "GOOGL", "MSFT", "TSLA", "AMZN"]
         
-        // Load popular crypto (mock data for now)
-        popularCrypto = [
-            Cryptocurrency(symbol: "BTC", name: "Bitcoin", currentPrice: 45000.0, previousPrice: 44000.0, change24h: 1000.0, changePercent24h: 2.27, marketCap: 850000000000, volume24h: 30000000000, high24h: 45500.0, low24h: 43800.0),
-            Cryptocurrency(symbol: "ETH", name: "Ethereum", currentPrice: 3200.0, previousPrice: 3100.0, change24h: 100.0, changePercent24h: 3.23, marketCap: 380000000000, volume24h: 15000000000, high24h: 3250.0, low24h: 3080.0),
-            Cryptocurrency(symbol: "ADA", name: "Cardano", currentPrice: 1.50, previousPrice: 1.45, change24h: 0.05, changePercent24h: 3.45, marketCap: 48000000000, volume24h: 2000000000, high24h: 1.55, low24h: 1.44),
-            Cryptocurrency(symbol: "SOL", name: "Solana", currentPrice: 150.0, previousPrice: 145.0, change24h: 5.0, changePercent24h: 3.45, marketCap: 45000000000, volume24h: 3000000000, high24h: 155.0, low24h: 144.0),
-            Cryptocurrency(symbol: "DOT", name: "Polkadot", currentPrice: 25.0, previousPrice: 24.0, change24h: 1.0, changePercent24h: 4.17, marketCap: 25000000000, volume24h: 1000000000, high24h: 25.5, low24h: 23.8)
-        ]
+        for symbol in popularSymbols {
+            fetchStockQuote(symbol: symbol)
+                .sink(
+                    receiveCompletion: { _ in },
+                    receiveValue: { [weak self] stock in
+                        if let stock = stock {
+                            DispatchQueue.main.async {
+                                if let index = self?.popularStocks.firstIndex(where: { $0.symbol == symbol }) {
+                                    self?.popularStocks[index] = stock
+                                } else {
+                                    self?.popularStocks.append(stock)
+                                }
+                            }
+                        }
+                    }
+                )
+                .store(in: &cancellables)
+        }
+        
+        // Load popular crypto with real data
+        let popularCryptoIds = ["bitcoin", "ethereum", "cardano", "solana", "polkadot"]
+        
+        for cryptoId in popularCryptoIds {
+            fetchCryptoPrice(symbol: cryptoId)
+                .sink(
+                    receiveCompletion: { _ in },
+                    receiveValue: { [weak self] crypto in
+                        if let crypto = crypto {
+                            DispatchQueue.main.async {
+                                if let index = self?.popularCrypto.firstIndex(where: { $0.symbol.lowercased() == cryptoId }) {
+                                    self?.popularCrypto[index] = crypto
+                                } else {
+                                    self?.popularCrypto.append(crypto)
+                                }
+                            }
+                        }
+                    }
+                )
+                .store(in: &cancellables)
+        }
     }
     
     // MARK: - Real-time Updates
     
     func startRealTimeUpdates() {
-        // In a real app, you would use WebSocket connections for real-time updates
-        // For now, we'll simulate updates with a timer
+        // Update popular assets every 30 seconds
         Timer.publish(every: 30, on: .main, in: .common)
             .autoconnect()
             .sink { [weak self] _ in
-                self?.updatePrices()
+                self?.updatePopularAssets()
             }
             .store(in: &cancellables)
     }
     
-    private func updatePrices() {
-        // Simulate price changes
-        for i in 0..<popularStocks.count {
-            let randomChange = Double.random(in: -5...5)
-            popularStocks[i].currentPrice += randomChange
-            popularStocks[i].change += randomChange
-            popularStocks[i].changePercent = (popularStocks[i].change / popularStocks[i].previousClose) * 100
+    private func updatePopularAssets() {
+        // Update popular stocks
+        let popularSymbols = ["AAPL", "GOOGL", "MSFT", "TSLA", "AMZN"]
+        
+        for symbol in popularSymbols {
+            fetchStockQuote(symbol: symbol)
+                .sink(
+                    receiveCompletion: { _ in },
+                    receiveValue: { [weak self] stock in
+                        if let stock = stock {
+                            DispatchQueue.main.async {
+                                if let index = self?.popularStocks.firstIndex(where: { $0.symbol == symbol }) {
+                                    self?.popularStocks[index] = stock
+                                }
+                            }
+                        }
+                    }
+                )
+                .store(in: &cancellables)
         }
         
-        for i in 0..<popularCrypto.count {
-            let randomChange = Double.random(in: -500...500)
-            popularCrypto[i].currentPrice += randomChange
-            popularCrypto[i].change24h += randomChange
-            popularCrypto[i].changePercent24h = (popularCrypto[i].change24h / popularCrypto[i].previousPrice) * 100
+        // Update popular crypto
+        let popularCryptoIds = ["bitcoin", "ethereum", "cardano", "solana", "polkadot"]
+        
+        for cryptoId in popularCryptoIds {
+            fetchCryptoPrice(symbol: cryptoId)
+                .sink(
+                    receiveCompletion: { _ in },
+                    receiveValue: { [weak self] crypto in
+                        if let crypto = crypto {
+                            DispatchQueue.main.async {
+                                if let index = self?.popularCrypto.firstIndex(where: { $0.symbol.lowercased() == cryptoId }) {
+                                    self?.popularCrypto[index] = crypto
+                                }
+                            }
+                        }
+                    }
+                )
+                .store(in: &cancellables)
         }
+    }
+    
+    // MARK: - Portfolio Tracking
+    
+    func updatePortfolioHoldings(_ holdings: [Holding]) {
+        for holding in holdings {
+            if holding.assetType == .stock {
+                fetchStockQuote(symbol: holding.symbol)
+                    .sink(
+                        receiveCompletion: { _ in },
+                        receiveValue: { stock in
+                            if let stock = stock {
+                                DispatchQueue.main.async {
+                                    // Notify portfolio manager to update holding price
+                                    NotificationCenter.default.post(
+                                        name: .holdingPriceUpdated,
+                                        object: nil,
+                                        userInfo: [
+                                            "symbol": holding.symbol,
+                                            "assetType": AssetType.stock,
+                                            "currentPrice": stock.currentPrice
+                                        ]
+                                    )
+                                }
+                            }
+                        }
+                    )
+                    .store(in: &cancellables)
+            } else if holding.assetType == .cryptocurrency {
+                // For crypto, we need to map common symbols to CoinGecko IDs
+                let cryptoId = mapCryptoSymbolToId(holding.symbol)
+                fetchCryptoPrice(symbol: cryptoId)
+                    .sink(
+                        receiveCompletion: { _ in },
+                        receiveValue: { crypto in
+                            if let crypto = crypto {
+                                DispatchQueue.main.async {
+                                    // Notify portfolio manager to update holding price
+                                    NotificationCenter.default.post(
+                                        name: .holdingPriceUpdated,
+                                        object: nil,
+                                        userInfo: [
+                                            "symbol": holding.symbol,
+                                            "assetType": AssetType.cryptocurrency,
+                                            "currentPrice": crypto.currentPrice
+                                        ]
+                                    )
+                                }
+                            }
+                        }
+                    )
+                    .store(in: &cancellables)
+            }
+        }
+    }
+    
+    func mapCryptoSymbolToId(_ symbol: String) -> String {
+        // Map common crypto symbols to CoinGecko IDs
+        let mapping = [
+            "BTC": "bitcoin",
+            "ETH": "ethereum",
+            "ADA": "cardano",
+            "SOL": "solana",
+            "DOT": "polkadot",
+            "LTC": "litecoin",
+            "XRP": "ripple",
+            "DOGE": "dogecoin",
+            "SHIB": "shiba-inu",
+            "MATIC": "matic-network"
+        ]
+        return mapping[symbol.uppercased()] ?? symbol.lowercased()
+    }
+    
+    // MARK: - Fallback Search Methods
+    
+    private func fallbackStockSearch(query: String) -> AnyPublisher<[Stock], Error> {
+        print("🔄 Using fallback stock search for: \(query)")
+        
+        let commonStocks = [
+            ("AAPL", "Apple Inc."),
+            ("TSLA", "Tesla Inc."),
+            ("GOOGL", "Alphabet Inc."),
+            ("MSFT", "Microsoft Corporation"),
+            ("AMZN", "Amazon.com Inc."),
+            ("META", "Meta Platforms Inc."),
+            ("NVDA", "NVIDIA Corporation"),
+            ("NFLX", "Netflix Inc."),
+            ("SWPPX", "Schwab S&P 500 Index Fund"),
+            ("VOO", "Vanguard S&P 500 ETF"),
+            ("SPY", "SPDR S&P 500 ETF Trust"),
+            ("QQQ", "Invesco QQQ Trust"),
+            ("VTI", "Vanguard Total Stock Market ETF"),
+            ("VEA", "Vanguard FTSE Developed Markets ETF"),
+            ("VWO", "Vanguard FTSE Emerging Markets ETF")
+        ]
+        
+        let matchingStocks = commonStocks.filter { stock in
+            stock.0.uppercased().contains(query.uppercased()) ||
+            stock.1.uppercased().contains(query.uppercased())
+        }
+        
+        print("📈 Fallback found \(matchingStocks.count) stocks")
+        for stock in matchingStocks {
+            print("   📈 \(stock.0) - \(stock.1)")
+        }
+        
+        let stocks = matchingStocks.map { symbol, name in
+            Stock(
+                symbol: symbol,
+                name: name,
+                currentPrice: 0.0,
+                previousClose: 0.0,
+                change: 0.0,
+                changePercent: 0.0,
+                marketCap: nil,
+                volume: nil,
+                high: nil,
+                low: nil,
+                open: nil
+            )
+        }
+        
+        return Just(stocks).setFailureType(to: Error.self).eraseToAnyPublisher()
+    }
+    
+    private func fallbackCryptoSearch(query: String) -> AnyPublisher<[Cryptocurrency], Error> {
+        print("🔄 Using fallback crypto search for: \(query)")
+        
+        let commonCryptos = [
+            ("BTC", "Bitcoin"),
+            ("ETH", "Ethereum"),
+            ("ADA", "Cardano"),
+            ("SOL", "Solana"),
+            ("DOT", "Polkadot"),
+            ("LTC", "Litecoin"),
+            ("XRP", "Ripple"),
+            ("DOGE", "Dogecoin"),
+            ("SHIB", "Shiba Inu"),
+            ("MATIC", "Polygon"),
+            ("LINK", "Chainlink"),
+            ("UNI", "Uniswap"),
+            ("AVAX", "Avalanche"),
+            ("ATOM", "Cosmos"),
+            ("FTM", "Fantom")
+        ]
+        
+        let matchingCryptos = commonCryptos.filter { crypto in
+            crypto.0.uppercased().contains(query.uppercased()) ||
+            crypto.1.uppercased().contains(query.uppercased())
+        }
+        
+        print("🪙 Fallback found \(matchingCryptos.count) cryptos")
+        for crypto in matchingCryptos {
+            print("   🪙 \(crypto.0) - \(crypto.1)")
+        }
+        
+        let cryptos = matchingCryptos.map { symbol, name in
+            Cryptocurrency(
+                symbol: symbol,
+                name: name,
+                currentPrice: 0.0,
+                previousPrice: 0.0,
+                change24h: 0.0,
+                changePercent24h: 0.0,
+                marketCap: nil,
+                volume24h: nil,
+                high24h: nil,
+                low24h: nil
+            )
+        }
+        
+        return Just(cryptos).setFailureType(to: Error.self).eraseToAnyPublisher()
     }
 }
 
@@ -226,6 +517,22 @@ struct GlobalQuote: Codable {
 
 struct SymbolSearchResponse: Codable {
     let bestMatches: [SymbolMatch]
+    
+    enum CodingKeys: String, CodingKey {
+        case bestMatches = "bestMatches"
+    }
+    
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        
+        // Handle case where bestMatches might be empty or missing
+        if let matches = try? container.decode([SymbolMatch].self, forKey: .bestMatches) {
+            self.bestMatches = matches
+        } else {
+            print("⚠️ No bestMatches found in response")
+            self.bestMatches = []
+        }
+    }
 }
 
 struct SymbolMatch: Codable {
@@ -257,4 +564,9 @@ enum NetworkError: Error {
     case invalidURL
     case noData
     case decodingError
+}
+
+// MARK: - Notification Names
+extension Notification.Name {
+    static let holdingPriceUpdated = Notification.Name("holdingPriceUpdated")
 } 

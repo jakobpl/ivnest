@@ -15,7 +15,7 @@ enum AssetType: String, CaseIterable, Codable {
 
 // MARK: - Stock Model
 struct Stock: Codable, Identifiable {
-    let id = UUID()
+    let id: UUID
     let symbol: String
     let name: String
     var currentPrice: Double
@@ -31,11 +31,26 @@ struct Stock: Codable, Identifiable {
     var priceChangeColor: String {
         return change >= 0 ? "green" : "red"
     }
+    
+    init(symbol: String, name: String, currentPrice: Double, previousClose: Double, change: Double, changePercent: Double, marketCap: Double? = nil, volume: Int? = nil, high: Double? = nil, low: Double? = nil, open: Double? = nil) {
+        self.id = UUID()
+        self.symbol = symbol
+        self.name = name
+        self.currentPrice = currentPrice
+        self.previousClose = previousClose
+        self.change = change
+        self.changePercent = changePercent
+        self.marketCap = marketCap
+        self.volume = volume
+        self.high = high
+        self.low = low
+        self.open = open
+    }
 }
 
 // MARK: - Cryptocurrency Model
 struct Cryptocurrency: Codable, Identifiable {
-    let id = UUID()
+    let id: UUID
     let symbol: String
     let name: String
     var currentPrice: Double
@@ -50,11 +65,25 @@ struct Cryptocurrency: Codable, Identifiable {
     var priceChangeColor: String {
         return change24h >= 0 ? "green" : "red"
     }
+    
+    init(symbol: String, name: String, currentPrice: Double, previousPrice: Double, change24h: Double, changePercent24h: Double, marketCap: Double? = nil, volume24h: Double? = nil, high24h: Double? = nil, low24h: Double? = nil) {
+        self.id = UUID()
+        self.symbol = symbol
+        self.name = name
+        self.currentPrice = currentPrice
+        self.previousPrice = previousPrice
+        self.change24h = change24h
+        self.changePercent24h = changePercent24h
+        self.marketCap = marketCap
+        self.volume24h = volume24h
+        self.high24h = high24h
+        self.low24h = low24h
+    }
 }
 
 // MARK: - Portfolio Model
 struct Portfolio: Codable, Identifiable {
-    let id = UUID()
+    let id: UUID
     var name: String
     var balance: Double
     var totalValue: Double
@@ -63,10 +92,12 @@ struct Portfolio: Codable, Identifiable {
     var monthlyROI: Double
     var holdings: [Holding]
     var transactions: [Transaction]
+    var historicalData: [PortfolioDataPoint]
     var createdAt: Date
     var lastUpdated: Date
     
-    init(name: String, initialBalance: Double = 10000.0) {
+    init(name: String, initialBalance: Double = 0.0) {
+        self.id = UUID()
         self.name = name
         self.balance = initialBalance
         self.totalValue = initialBalance
@@ -75,8 +106,42 @@ struct Portfolio: Codable, Identifiable {
         self.monthlyROI = 0.0
         self.holdings = []
         self.transactions = []
+        self.historicalData = []
         self.createdAt = Date()
         self.lastUpdated = Date()
+        
+        // Add initial data point
+        let initialDataPoint = PortfolioDataPoint(
+            date: Date(),
+            value: initialBalance,
+            change: 0.0,
+            changePercent: 0.0
+        )
+        self.historicalData.append(initialDataPoint)
+    }
+    
+    init(name: String, cash: Double, holdings: [Holding], totalValue: Double, totalReturn: Double, totalReturnPercentage: Double) {
+        self.id = UUID()
+        self.name = name
+        self.balance = cash
+        self.totalValue = totalValue
+        self.totalInvested = 0.0
+        self.totalROI = totalReturnPercentage
+        self.monthlyROI = 0.0
+        self.holdings = holdings
+        self.transactions = []
+        self.historicalData = []
+        self.createdAt = Date()
+        self.lastUpdated = Date()
+        
+        // Add initial data point
+        let initialDataPoint = PortfolioDataPoint(
+            date: Date(),
+            value: totalValue,
+            change: totalReturn,
+            changePercent: totalReturnPercentage
+        )
+        self.historicalData.append(initialDataPoint)
     }
     
     mutating func updatePortfolioValue() {
@@ -85,12 +150,30 @@ struct Portfolio: Codable, Identifiable {
         totalInvested = holdings.reduce(0.0) { $0 + $1.totalInvested }
         totalROI = totalInvested > 0 ? ((totalValue - totalInvested) / totalInvested) * 100 : 0.0
         lastUpdated = Date()
+        
+        // Add historical data point
+        let dataPoint = PortfolioDataPoint(
+            date: Date(),
+            value: totalValue,
+            change: totalValue - totalInvested,
+            changePercent: totalROI
+        )
+        historicalData.append(dataPoint)
     }
 }
 
+// MARK: - Portfolio Data Point
+struct PortfolioDataPoint: Codable {
+    let date: Date
+    let value: Double
+    let change: Double
+    let changePercent: Double
+}
+
+
 // MARK: - Holding Model
 struct Holding: Codable, Identifiable {
-    let id = UUID()
+    let id: UUID
     let assetType: AssetType
     let symbol: String
     let name: String
@@ -104,6 +187,7 @@ struct Holding: Codable, Identifiable {
     var lastUpdated: Date
     
     init(assetType: AssetType, symbol: String, name: String, quantity: Double, price: Double) {
+        self.id = UUID()
         self.assetType = assetType
         self.symbol = symbol
         self.name = name
@@ -136,7 +220,7 @@ struct Holding: Codable, Identifiable {
 
 // MARK: - Transaction Model
 struct Transaction: Codable, Identifiable {
-    let id = UUID()
+    let id: UUID
     let type: TransactionType
     let assetType: AssetType
     let symbol: String
@@ -146,6 +230,19 @@ struct Transaction: Codable, Identifiable {
     let totalAmount: Double
     let timestamp: Date
     let portfolioId: UUID
+    
+    init(type: TransactionType, assetType: AssetType, symbol: String, name: String, quantity: Double, price: Double, totalAmount: Double, timestamp: Date, portfolioId: UUID) {
+        self.id = UUID()
+        self.type = type
+        self.assetType = assetType
+        self.symbol = symbol
+        self.name = name
+        self.quantity = quantity
+        self.price = price
+        self.totalAmount = totalAmount
+        self.timestamp = timestamp
+        self.portfolioId = portfolioId
+    }
     
     enum TransactionType: String, CaseIterable, Codable {
         case buy = "buy"
@@ -186,7 +283,7 @@ struct MarketData: Codable {
 
 // MARK: - Watchlist Item
 struct WatchlistItem: Codable, Identifiable {
-    let id = UUID()
+    let id: UUID
     let assetType: AssetType
     let symbol: String
     let name: String
@@ -197,5 +294,16 @@ struct WatchlistItem: Codable, Identifiable {
     
     var priceChangeColor: String {
         return priceChange >= 0 ? "green" : "red"
+    }
+    
+    init(assetType: AssetType, symbol: String, name: String, currentPrice: Double, priceChange: Double, priceChangePercent: Double, addedAt: Date = Date()) {
+        self.id = UUID()
+        self.assetType = assetType
+        self.symbol = symbol
+        self.name = name
+        self.currentPrice = currentPrice
+        self.priceChange = priceChange
+        self.priceChangePercent = priceChangePercent
+        self.addedAt = addedAt
     }
 } 
