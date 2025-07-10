@@ -24,8 +24,7 @@ class DepositOverlayView: UIView {
     
     // MARK: - Properties
     weak var delegate: DepositOverlayViewDelegate?
-    private var currentAmount: String = "0"
-    private var hasDecimal = false
+    private var digitString: String = "" // Only digits, no decimal
     
     // MARK: - Initialization
     override init(frame: CGRect) {
@@ -46,19 +45,19 @@ class DepositOverlayView: UIView {
     private func setupUI() {
         backgroundColor = .clear
         
-        // Background view with blur effect
+        // Background view (solid black)
         backgroundView.translatesAutoresizingMaskIntoConstraints = false
-        backgroundView.backgroundColor = UIColor.black.withAlphaComponent(0.8)
+        backgroundView.backgroundColor = .black
         
         // Container view
         containerView.translatesAutoresizingMaskIntoConstraints = false
-        containerView.backgroundColor = UIColor(red: 0.1, green: 0.1, blue: 0.1, alpha: 1.0)
+        containerView.backgroundColor = UIColor(red: 0.0, green: 0.0, blue: 0.0, alpha: 1.0)
         containerView.layer.cornerRadius = 20
         containerView.layer.masksToBounds = true
         
         // Amount label
         amountLabel.translatesAutoresizingMaskIntoConstraints = false
-        amountLabel.text = "$0.00"
+        amountLabel.text = ""
         amountLabel.font = .systemFont(ofSize: 48, weight: .bold)
         amountLabel.textColor = .white
         amountLabel.textAlignment = .center
@@ -69,12 +68,12 @@ class DepositOverlayView: UIView {
         keyboardView.translatesAutoresizingMaskIntoConstraints = false
         keyboardView.backgroundColor = .clear
         
-        // Deposit button
+        // Deposit button (deep green text, no background)
         depositButton.translatesAutoresizingMaskIntoConstraints = false
         depositButton.setTitle("Deposit", for: .normal)
-        depositButton.setTitleColor(.white, for: .normal)
+        depositButton.setTitleColor(UIColor(red: 0.0, green: 0.7, blue: 0.3, alpha: 1.0), for: .normal)
         depositButton.titleLabel?.font = .systemFont(ofSize: 18, weight: .semibold)
-        depositButton.backgroundColor = UIColor(red: 0.1, green: 0.3, blue: 0.8, alpha: 1.0)
+        depositButton.backgroundColor = .clear
         depositButton.layer.cornerRadius = 12
         depositButton.addTarget(self, action: #selector(depositButtonTapped), for: .touchUpInside)
         
@@ -113,11 +112,12 @@ class DepositOverlayView: UIView {
             amountLabel.topAnchor.constraint(equalTo: containerView.topAnchor, constant: 40),
             amountLabel.leadingAnchor.constraint(equalTo: containerView.leadingAnchor, constant: 20),
             amountLabel.trailingAnchor.constraint(equalTo: containerView.trailingAnchor, constant: -20),
+            amountLabel.heightAnchor.constraint(equalToConstant: 60), // Fixed height
             
-            // Keyboard view
+            // Keyboard view (centered horizontally)
             keyboardView.topAnchor.constraint(equalTo: amountLabel.bottomAnchor, constant: 40),
-            keyboardView.leadingAnchor.constraint(equalTo: containerView.leadingAnchor, constant: 20),
-            keyboardView.trailingAnchor.constraint(equalTo: containerView.trailingAnchor, constant: -20),
+            keyboardView.centerXAnchor.constraint(equalTo: containerView.centerXAnchor),
+            keyboardView.widthAnchor.constraint(equalToConstant: 3 * 70 + 2 * 16), // 3 buttons + 2 spacings
             keyboardView.heightAnchor.constraint(equalToConstant: 300),
             
             // Deposit button
@@ -134,11 +134,12 @@ class DepositOverlayView: UIView {
     }
     
     private func setupKeyboard() {
-        let buttonSize: CGFloat = 60
-        let spacing: CGFloat = 10
+        let buttonSize: CGFloat = 70
+        let spacing: CGFloat = 16
         let buttonsPerRow = 3
         
-        let numbers = ["1", "2", "3", "4", "5", "6", "7", "8", "9", ".", "0", "⌫"]
+        // Only digits and backspace, no decimal
+        let numbers = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "⌫"]
         
         for (index, number) in numbers.enumerated() {
             let row = index / buttonsPerRow
@@ -148,8 +149,8 @@ class DepositOverlayView: UIView {
             button.translatesAutoresizingMaskIntoConstraints = false
             button.setTitle(number, for: .normal)
             button.setTitleColor(.white, for: .normal)
-            button.titleLabel?.font = .systemFont(ofSize: 24, weight: .medium)
-            button.backgroundColor = UIColor(red: 0.2, green: 0.2, blue: 0.2, alpha: 1.0)
+            button.titleLabel?.font = .systemFont(ofSize: 28, weight: .medium)
+            button.backgroundColor = UIColor(white: 0.2, alpha: 1.0)
             button.layer.cornerRadius = buttonSize / 2
             button.tag = index
             button.addTarget(self, action: #selector(keyboardButtonTapped(_:)), for: .touchUpInside)
@@ -191,35 +192,23 @@ class DepositOverlayView: UIView {
         
         switch buttonText {
         case "⌫":
-            if currentAmount.count > 1 {
-                currentAmount.removeLast()
-                if currentAmount == "0" {
-                    currentAmount = "0"
-                }
-            } else {
-                currentAmount = "0"
+            if !digitString.isEmpty {
+                digitString.removeLast()
             }
-            hasDecimal = currentAmount.contains(".")
-            
         case ".":
-            if !hasDecimal {
-                currentAmount += "."
-                hasDecimal = true
-            }
-            
+            // Do nothing (decimal is disabled)
+            break
         default:
-            if currentAmount == "0" && buttonText != "." {
-                currentAmount = buttonText
-            } else {
-                currentAmount += buttonText
+            if digitString.count < 9 { // Limit to 9 digits (up to $9,999,999.99)
+                digitString.append(buttonText)
             }
         }
-        
         updateAmountLabel()
     }
     
     @objc private func depositButtonTapped() {
-        guard let amount = Double(currentAmount), amount > 0 else { return }
+        let amount = getCurrentAmount()
+        guard amount > 0 else { return }
         delegate?.depositOverlayDidCompleteDeposit(amount: amount)
     }
     
@@ -229,15 +218,21 @@ class DepositOverlayView: UIView {
     
     // MARK: - Helpers
     private func updateAmountLabel() {
-        let formatter = NumberFormatter()
-        formatter.numberStyle = .decimal
-        formatter.minimumFractionDigits = 2
-        formatter.maximumFractionDigits = 2
-        
-        if let number = Double(currentAmount) {
-            amountLabel.text = "$\(formatter.string(from: NSNumber(value: number)) ?? "0.00")"
-        } else {
-            amountLabel.text = "$0.00"
+        if digitString.isEmpty {
+            amountLabel.text = ""
+            return
         }
+        let cents = Int(digitString) ?? 0
+        let amount = Double(cents) / 100.0
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .currency
+        formatter.currencyCode = "USD"
+        amountLabel.text = formatter.string(from: NSNumber(value: amount))
+    }
+    
+    private func getCurrentAmount() -> Double {
+        if digitString.isEmpty { return 0.0 }
+        let cents = Int(digitString) ?? 0
+        return Double(cents) / 100.0
     }
 } 
